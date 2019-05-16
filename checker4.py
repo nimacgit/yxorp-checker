@@ -82,9 +82,9 @@ def socks5(host, port, soc):						# Check if a proxy is Socks5 and alive
 		return False
 	return True
 
-def isAlive(pip,timeout):    						# Check if a proxy is alive
-    	try:        
-		proxy_handler = urllib2.ProxyHandler({'http': pip})     # Setup proxy handler   
+def isAlive(pip,timeout):
+	try:
+		proxy_handler = urllib2.ProxyHandler({'http': pip})
 		proxy_handler = urllib2.ProxyHandler({'https': pip})
 		opener = urllib2.build_opener(proxy_handler)		
 		opener.addheaders = [('User-agent', 'Mozilla/5.0')]	# Some headers
@@ -93,14 +93,14 @@ def isAlive(pip,timeout):    						# Check if a proxy is alive
 		req=urllib2.Request('https://www.twitter.com')		# Make the request
 #		req=urllib2.Request('http://www.porn-plus.com')		# Make the request
 		# req=urllib2.Request('https://www.facebook.com')
-		sock=urllib2.urlopen(req,None,timeout=timeout)		# Open url
-    	except urllib2.HTTPError, e:        				# Catch exceptions
+		sock=urllib2.urlopen(req,None,timeout=timeout)
+	except urllib2.HTTPError, e:
 		error(pip+" throws: "+str(e.code))
 		return False
 	except Exception, details:
 		error(pip+" throws: "+str(details))
 		return False
-    	return True
+	return True
 
 def checkProxies():
 	while len(toCheck) > 0:
