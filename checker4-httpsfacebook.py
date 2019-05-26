@@ -90,7 +90,7 @@ def isAlive(pip,timeout):
 		opener.addheaders = [('User-agent', 'Mozilla/5.0')]	# Some headers
 		urllib2.install_opener(opener)        			# Install the opener
 		# req=urllib2.Request('http://www.google.com')		# Make the request
-		req=urllib2.Request('https://www.twitter.com')		# Make the request
+		req=urllib2.Request('https://www.facebook.com')		# Make the request
 #		req=urllib2.Request('http://www.porn-plus.com')		# Make the request
 		# req=urllib2.Request('https://www.facebook.com')
 		sock=urllib2.urlopen(req,None,timeout=timeout)

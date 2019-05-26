@@ -82,7 +82,7 @@ def socks5(host, port, soc):						# Check if a proxy is Socks5 and alive
 		return False
 	return True
 
-def isAlive(pip,timeout):
+def isAlive(pip,timeout, inputsite):
 	try:
 		proxy_handler = urllib2.ProxyHandler({'http': pip})
 		proxy_handler = urllib2.ProxyHandler({'https': pip})
@@ -90,7 +90,9 @@ def isAlive(pip,timeout):
 		opener.addheaders = [('User-agent', 'Mozilla/5.0')]	# Some headers
 		urllib2.install_opener(opener)        			# Install the opener
 		# req=urllib2.Request('http://www.google.com')		# Make the request
-		req=urllib2.Request('https://www.twitter.com')		# Make the request
+		print "debug"
+		print inputsite
+		req=urllib2.Request(inputsite)		# Make the request
 #		req=urllib2.Request('http://www.porn-plus.com')		# Make the request
 		# req=urllib2.Request('https://www.facebook.com')
 		sock=urllib2.urlopen(req,None,timeout=timeout)
@@ -102,7 +104,7 @@ def isAlive(pip,timeout):
 		return False
 	return True
 
-def checkProxies():
+def checkProxies(inputsite):
 	while len(toCheck) > 0:
 		proxy = toCheck[0]
 		toCheck.pop(0)
@@ -121,7 +123,7 @@ def checkProxies():
 			saveToFile(proxy)
 		else:
 			alert("%s not a working socks 4/5." % proxy)
-			if(isAlive(proxy,timeout)):
+			if(isAlive(proxy,timeout,inputsite)):
 				action("Working http/https proxy found (%s)!" % proxy)
 				working.append(proxy)
 				saveToFile(proxy)
@@ -141,9 +143,17 @@ checking = True
 
 proxiesfile = get("Proxy list: ")
 outputfile = get("Output file: ")
+inputsite = get("inputsite: ")
 outputfile = outputfile + str(time.time())
 threadsnum = int(get("Number of threads: "))
 timeout = int(get("Timeout(seconds): "))
+print "configs:"
+print proxiesfile
+print outputfile
+print inputsite
+print outputfile
+print threadsnum
+print timeout
 try:
 	proxiesfile = open(proxiesfile,"r")
 except:
@@ -162,7 +172,7 @@ if(os.path.isfile(outputfile)):
 			errorExit("Quitting...")
 
 for i in xrange(threadsnum):
-	threads.append(threading.Thread(target=checkProxies))
+	threads.append(threading.Thread(target=checkProxies(inputsite)))
 	threads[i].setDaemon(True)
 	action("Starting thread n: "+str(i+1))
 	threads[i].start()
