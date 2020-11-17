@@ -70,6 +70,8 @@ class ProxyProvider:
         try:
             if ip in self.ip_map[protocol]:
                 for i in range(len(self.ip_q[protocol])):
+                    if len(self.ip_q[protocol][i]) < 2:
+                        logger.info(f"WARNING! {i} --- {self.ip_q[protocol][i]}")
                     if self.ip_q[protocol][i][1] == ip:
                         self.ip_q[protocol][i] = (min(self.ip_q[protocol][i][0] + 2, self.max_ip_priority), self.ip_q[protocol][i][1])
                 v = self.ip_map[protocol][ip]
@@ -119,13 +121,13 @@ class ProxyProvider:
                 nodes[ind] = (max(nodes[ind][0] - 1, 0), nodes[ind][1])
             else:
                 nodes[ind] = (nodes[ind][0], nodes[ind][1])
+            self.ip_map[protocol][nodes[ind][1]] = nodes[ind][0]
+            self.last_ips[protocol].append(nodes[ind][1])
+            self.last_ips_time[protocol].append(time.time())
         except:
             logger.exception("error in get_good_proxy")
         for i in range(len(nodes)):
             heapq.heappush(self.ip_q[protocol], nodes[i])
-        self.ip_map[protocol][nodes[ind][1]] = nodes[ind][0]
-        self.last_ips[protocol].append(nodes[ind][1])
-        self.last_ips_time[protocol].append(time.time())
         return nodes[ind][1]
     
     def get_bad_proxy(self, protocol):
@@ -157,14 +159,14 @@ class ProxyProvider:
             while nodes[ind][1] in self.bad_last_ips[protocol] or nodes[ind][1] in self.last_ips[protocol]:
                 ind = randint(min_val_ind, len(nodes) - 2)
             nodes[ind] = (max(nodes[ind][0] - 2, 0), nodes[ind][1])
+            self.ip_map[protocol][nodes[ind][1]] = nodes[ind][0]
+            self.bad_last_ips[protocol].append(nodes[ind][1])
+            self.bad_last_ips_time[protocol].append(time.time())
         except:
             logger.exception("WTF in get_bad func")
         for i in range(len(nodes)):
             self.ip_q[protocol].append(nodes[i])
         heapq.heapify(self.ip_q[protocol])
-        self.ip_map[protocol][nodes[ind][1]] = nodes[ind][0]
-        self.bad_last_ips[protocol].append(nodes[ind][1])
-        self.bad_last_ips_time[protocol].append(time.time())
         return nodes[ind][1]
 
     def change_priority(self, protocol, src_p, dest_p):
@@ -176,6 +178,8 @@ class ProxyProvider:
         heapq.heapify(self.ip_q[protocol])
         
     def get_stat(self, protocol):
+        if protocol not in self.PROTOCOLS:
+            return {"protocol not found"}
         if len(self.ip_q[protocol]) > 0:
             min_val = self.ip_q[protocol][0][0]
         else:
@@ -218,7 +222,7 @@ class ProxyProvider:
             for protocol in self.PROTOCOLS:
                 self.add_ip(protocol, requests.get("https://pubproxy.com/api/proxy?type=http&speed=15&https=true", timeout=15, proxies=proxies).json()["data"][0]["ipPort"])
         except:
-            logger.exception("pubproxy failed")
+            logger.info("pubproxy failed")
         pass
     
     def _add_scylla(self):
@@ -230,7 +234,7 @@ class ProxyProvider:
             for p in all_p:
                 self.add_ip("http", f'{p["ip"]}:{p["port"]}')
         except:
-            logger.exception("scylla failed")
+            logger.info("scylla failed")
             pass
 
     def _add_proxy_url(self):
@@ -266,14 +270,23 @@ class ProxyProvider:
                     logger.debug(f"done url {url}")
                 except:
                     try:
-                        resp = requests.get(url, timeout=15)
+                        resp = requests.get(f"https://{url}", timeout=15)
                         regs = re.findall(r'((?:\d{1,3}\.){3}\d{1,3}):(\d+)', resp.text)
                         for protocol in self.PROTOCOLS:
                             for reg in regs:
                                 self.add_ip(protocol, reg[0] + ":" + reg[1])
                         logger.debug(f"done url {url}")
                     except:
-                        logger.info(f"bad url {url}")
+                        logger.info(f"bad url https://{url}")
+                        try:
+                            resp = requests.get(f"https://{url}", timeout=15)
+                            regs = re.findall(r'((?:\d{1,3}\.){3}\d{1,3}):(\d+)', resp.text)
+                            for protocol in self.PROTOCOLS:
+                                for reg in regs:
+                                    self.add_ip(protocol, reg[0] + ":" + reg[1])
+                            logger.debug(f"done url {url}")
+                        except:
+                            logger.info(f"bad url http://{url}")
     
     def thread_update(self):
         time.sleep(10)
@@ -285,9 +298,9 @@ class ProxyProvider:
     
     def update_data(self):
         if time.time() - self.last_save_time > 300:
-                self.save_to_file("proxies-backup")
-                logger.info("save backup")
-                self.last_save_time = time.time()
+            self.save_to_file("proxies-backup")
+            logger.info("save backup")
+            self.last_save_time = time.time()
 
         if not self.readed_file:
             self._add_file_proxies()
