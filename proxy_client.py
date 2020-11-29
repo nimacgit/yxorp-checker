@@ -41,7 +41,25 @@ class ProxyProvider:
             except:
                 logger.debug("cant send bad ip")
                 time.sleep(0.5)
-    
+
+                
+    def change_priority(self, protocol, src_p, dst_p):
+        while True:
+            try:
+                return requests.get(f"http://{self.ipport}/chng_p/{protocol}/{src_p}/{dst_p}").json()
+            except:
+                logger.debug("cant get stats")
+                time.sleep(0.5)
+
+    def get_stats(self, protocol):
+        while True:
+            try:
+                return requests.get(f"http://{self.ipport}/stat/{protocol}").json()
+            except:
+                logger.debug("cant get stats")
+                time.sleep(0.5)
+
+
     def get_link(self, url, protocol=None, retry=-1):
         headers = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_11_5) AppleWebKit/537.36 (KHTML, like Gecko) Cafari/537.36'}
         if retry < 0:

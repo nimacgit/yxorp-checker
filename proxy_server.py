@@ -10,6 +10,7 @@ from random import choice, randint
 from loguru import logger
 import threading
 import time
+import os
 
 
 '''
@@ -49,7 +50,7 @@ class ProxyProvider:
         self.is_firt_time = True
         self.update_thread = threading.Thread(target=self.thread_update)
         self.update_thread.start()
-        self.min_reuse_time = 15
+        self.min_reuse_time = 30
         self.max_ip_priority = 4
 
     def add_ip_with_priority(self, protocol, ip, priority):
@@ -63,12 +64,12 @@ class ProxyProvider:
         if (len(self.ip_map[protocol]) > 0 and ip in self.ip_map[protocol]) or len(ip) < 10:
             return
         logger.debug(f"add ip: {ip}")
-        self.ip_map[protocol][ip] = 2
-        heapq.heappush(self.ip_q[protocol], (2, ip))
+        self.ip_map[protocol][ip] = 3
+        heapq.heappush(self.ip_q[protocol], (3, ip))
 
     def bad_ip(self, protocol, ip):
         try:
-            if ip in self.ip_map[protocol]:
+            if ip in self.ip_map[protocol].keys():
                 for i in range(len(self.ip_q[protocol])):
                     if len(self.ip_q[protocol][i]) < 2:
                         logger.info(f"WARNING! {i} --- {self.ip_q[protocol][i]}")
@@ -111,7 +112,7 @@ class ProxyProvider:
                     self.last_ips[protocol].pop(0)
                     self.last_ips_time[protocol].pop(0)
                 ind = randint(0, len(nodes) - 1)
-                if len(self.last_ips[protocol]) + 5 >= len(nodes):
+                if len(self.last_ips[protocol]) + len(self.bad_last_ips[protocol]) + 5 >= len(nodes):
                     time.sleep(3)
                 else:
                     retry = False
@@ -152,7 +153,7 @@ class ProxyProvider:
                     self.bad_last_ips[protocol].pop(0)
                     self.bad_last_ips_time[protocol].pop(0)
                 ind = randint(min_val_ind, len(nodes) - 1)
-                if len(self.bad_last_ips[protocol]) + 5 >= len(nodes):
+                if len(self.last_ips[protocol]) + len(self.bad_last_ips[protocol]) + 5 >= len(nodes):
                     time.sleep(3)
                 else:
                     retry = False
@@ -170,7 +171,7 @@ class ProxyProvider:
         return nodes[ind][1]
 
     def change_priority(self, protocol, src_p, dest_p):
-        logger.debug(f"change priority {src_p}   {dest_p}")
+#         logger.debug(f"change priority {src_p}   {dest_p}")
         for i in range(len(self.ip_q[protocol])):
             if self.ip_q[protocol][i][0] == src_p:
                 self.ip_map[protocol][self.ip_q[protocol][i][1]] = dest_p
@@ -179,7 +180,7 @@ class ProxyProvider:
         
     def get_stat(self, protocol):
         if protocol not in self.PROTOCOLS:
-            return {"protocol not found"}
+            return {"result": "protocol not found"}
         if len(self.ip_q[protocol]) > 0:
             min_val = self.ip_q[protocol][0][0]
         else:
@@ -202,14 +203,16 @@ class ProxyProvider:
         try:
             self.readed_file = True
             for protocol in self.PROTOCOLS:
-                f = open(f"./proxies_{protocol}.txt", "r")
-                l = f.readline()
-                ps = []
-                while l:
-                    ps.append(l.replace("\n", "").split(","))
+                file_name = f"./proxies_{protocol}.txt"
+                if os.path.isfile(file_name):
+                    f = open(file_name, "r")
                     l = f.readline()
-                for p in ps:
-                    self.add_ip_with_priority(protocol, p[1], int(p[0]))
+                    ps = []
+                    while l:
+                        ps.append(l.replace("\n", "").split(","))
+                        l = f.readline()
+                    for p in ps:
+                        self.add_ip_with_priority(protocol, p[1], int(p[0]))
         except:
             logger.exception("couldnt read proxy file")
     
@@ -239,9 +242,11 @@ class ProxyProvider:
 
     def _add_proxy_url(self):
         urls = []
-        with open("proxy_url.txt", "r") as f:
-            for line in f.readlines():
-                urls.append(line[:-1])
+        file_name = "proxy_url.txt"
+        if os.path.isfile(file_name):
+            with open(file_name, "r") as f:
+                for line in f.readlines():
+                    urls.append(line[:-1])
         logger.info(f"number of proxy url {len(urls)}")
         for url in urls:
             logger.debug(f"update {url}")
@@ -292,12 +297,15 @@ class ProxyProvider:
         time.sleep(10)
         logger.info("update thread start")
         while True:
-            logger.info("updating")
-            self.update_data()
-            time.sleep(30)
+            try:
+                logger.info("updating")
+                self.update_data()
+                time.sleep(30)
+            except:
+                logger.exception("WTF Update Thread")
     
     def update_data(self):
-        if time.time() - self.last_save_time > 300:
+        if time.time() - self.last_save_time > 3600:
             self.save_to_file("proxies-backup")
             logger.info("save backup")
             self.last_save_time = time.time()
@@ -306,12 +314,12 @@ class ProxyProvider:
             self._add_file_proxies()
             logger.info("updated from file")
 
-        if time.time() - self.last_scylla_time > 60 or self.is_firt_time:
+        if time.time() - self.last_scylla_time > 3600 or self.is_firt_time:
             self._add_scylla()
             logger.info("updated scylla")
             self.last_scylla_time = time.time()
 
-        if time.time() - self.last_pubproxy_time > 30 or self.is_firt_time:
+        if time.time() - self.last_pubproxy_time > 3600 or self.is_firt_time:
             self._add_pubproxy()
             logger.info("updated pub")
             self.last_pubproxy_time = time.time()
@@ -328,10 +336,13 @@ class ProxyProvider:
 
 proxy_provider = ProxyProvider()
 time.sleep(10)
+# proxy_provider._add_file_proxies()
 app = Sanic()
 
 @app.route('/get_proxy/<protocol>')
 async def get(request, protocol):
+    if protocol not in proxy_provider.PROTOCOLS:
+        return json({"result": "protocol not found"})
     try:
         return json({"proxy": proxy_provider.get_proxy(protocol)})
     except:
@@ -340,6 +351,8 @@ async def get(request, protocol):
 
 @app.route('/get_bad_proxy/<protocol>')
 async def get_bad_proxy(request, protocol):
+    if protocol not in proxy_provider.PROTOCOLS:
+        return json({"result": "protocol not found"})
     try:
         return json({"proxy": proxy_provider.get_bad_proxy(protocol)})
     except:
@@ -348,6 +361,8 @@ async def get_bad_proxy(request, protocol):
     
 @app.route('/bad_ip/<protocol>/<ipport>')
 async def bad_ip(request, protocol, ipport):
+    if protocol not in proxy_provider.PROTOCOLS:
+        return json({"result": "protocol not found"})
     try:
         proxy_provider.bad_ip(protocol, ipport)
         return json({"result": "done"})
@@ -376,6 +391,8 @@ async def save(request):
 
 @app.route('/stat/<protocol>')
 async def stat(request, protocol):
+    if protocol not in proxy_provider.PROTOCOLS:
+        return json({"result": "protocol not found"})
     try:
         return json(proxy_provider.get_stat(protocol))
     except:
@@ -384,6 +401,8 @@ async def stat(request, protocol):
 
 @app.route('/chng_p/<protocol>/<src_p>/<dest_p>')
 async def chng_p(request, protocol, src_p, dest_p):
+    if protocol not in proxy_provider.PROTOCOLS:
+        return json({"result": "protocol not found"})
     try:
         proxy_provider.change_priority(protocol, int(src_p), int(dest_p))
         return json({"result": "done"})
@@ -393,6 +412,8 @@ async def chng_p(request, protocol, src_p, dest_p):
 
 @app.route('/del_p/<protocol>/<priority>')
 async def del_p(request, protocol, priority):
+    if protocol not in proxy_provider.PROTOCOLS:
+        return json({"result": "protocol not found"})
     try:
         proxy_provider.del_priority(protocol, int(priority))
         return json({"result": "done"})
