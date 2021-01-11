@@ -1,16 +1,125 @@
 from requests_html import AsyncHTMLSession
+from datetime import datetime, timedelta
 from proxy_client import ProxyProvider
 from multiprocessing import Process
+from bs4 import BeautifulSoup
 from loguru import logger
 import aio_pika as aiop
 import tracemalloc
 import threading
 import asyncio
+import requests
 import json
 import time
+import abc
 import re
 import os
 
+
+class IPParser(metaclass=abc.ABCMeta):
+    @abc.abstractmethod
+    def get_proxies(self):
+        pass
+
+EXAMPLE_HEADER = {
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+    # "Accept-Encoding": "gzip, deflate"
+    "Accept-Language": "en-US,en;q=0.5",
+    "Connection": "keep-alive",
+    "If-Modified-Since": (datetime.now() - timedelta(hours=10)).strftime("%a, %d %b %Y %H:%M:%S GMT"),
+    "Upgrade-Insecure-Requests": "1",
+    "User-Agent": "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:83.0) Gecko/20100101 Firefox/83.0",
+}
+
+
+class IPParserForKuaidaili():
+    def _get_ips_from_kuaidaili(self, html):
+        ip_list = []
+        soup = BeautifulSoup(html, 'html5lib')
+        table = soup.body.find("table")
+        rows = table.find_all('tr')
+        for row in rows:
+            cols = row.find_all('td')
+            if len(cols) < 2:
+                continue
+            ip = cols[0]
+            port = cols[1]
+            ip_candidates = re.findall(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b", str(ip))
+            if not ip_candidates or len(ip_candidates) < 1:
+                continue
+            new_ip = f'{ip_candidates[0]}:{port.text.strip()}'
+            ip_list.append(new_ip)
+        return ip_list
+
+    def get_proxies(self, from_page=1, to_page=40, sleep_time_betweet_requests=2):
+        ipports = []
+        for i in range(from_page, to_page):
+            time.sleep(sleep_time_betweet_requests)
+            try:
+                url = f"https://www.kuaidaili.com/free/inha/{i}/"
+                res = requests.get(url, timeout=15, headers=EXAMPLE_HEADER)
+                if res.status_code == 200:
+                    ipports = ipports + self._get_ips_from_kuaidaili(res.text)
+                else:
+                    logger.info(f"status is not 200 kuaidaili link {url}")
+            except:
+                logger.info("Exp in get from kuaidaili")
+        return list(set(ipports))
+
+
+class RParser():
+    def __init__(self):
+        self.file_name = "./reza_sites.txt"
+
+    def _get_site_urls_one_by_one_from_file(self):
+        try:
+            f = open(self.file_name, 'r')
+            counter = 0
+            while True:
+                data = f.readline()
+                if not data:
+                    break
+                data = data.strip()
+                yield data
+        except:
+            logger.info("cant open or parse file rparser")
+            return []
+
+    def _get_ips_from_page(self, html):
+        ip_list = []
+        soup = BeautifulSoup(html, 'html5lib')
+        table = soup.body.find("table")
+        rows = table.find_all('tr')
+        for row in rows:
+            cols = row.find_all('td')
+            if len(cols) < 2:
+                continue
+            ip = cols[0]
+            port = cols[1]
+            ip_candidates = re.findall(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b", str(ip))
+            if not ip_candidates or len(ip_candidates) < 1:
+                continue
+            new_ip = f'{ip_candidates[0]}:{port.text.strip()}'
+            ip_list.append(new_ip)
+
+        return ip_list
+
+    def get_proxies(self):
+        ips_set = set()
+        for url in self._get_site_urls_one_by_one_from_file():
+            try:
+                if url != "":
+                    logger.debug(f"{url}")
+                    res = requests.get(url, headers=EXAMPLE_HEADER, timeout=15)
+                    if res.status_code == 200:
+                        ip_list = self._get_ips_from_page(res.text)
+                        ips_set.update(ip_list)
+                    else:
+                        logger.info(f"status is not 200 link RProxy {url}")
+                    time.sleep(1)
+            except:
+                logger.info(f"Exception in get_ips RProxy {url}")
+        return list(ips_set)
 
 
 class ProxyUpdater:
@@ -23,6 +132,8 @@ class ProxyUpdater:
         self.last_save_time = time.time()
         self.last_proxy_url_time = time.time()
         self.asession = AsyncHTMLSession()
+        self.parsers = [RParser(), IPParserForKuaidaili()]
+        
     
     def _add_proxy_list(self, protocol, ipports):
         self.proxy_provider.add_ip_bulk(protocol, ipports)
@@ -103,7 +214,7 @@ class ProxyUpdater:
 
     async def update_data(self):
         if time.time() - self.last_save_time > 3600:
-            self.proxy_provider.save_to_file("proxies-backup")
+            self.proxy_provider.save_to_file()
             logger.info("save backup")
             self.last_save_time = time.time()
 
@@ -118,10 +229,17 @@ class ProxyUpdater:
             self.last_pubproxy_time = time.time()
 
         if time.time() - self.last_proxy_url_time > 3600 or self.is_firt_time:
+            for parser in self.parsers:
+                logger.debug(f"parsing using: {parser.__class__.__name__}")
+                ipports = parser.get_proxies()
+                logger.debug(f"got {len(ipports)} proxy")
+                self._add_proxy_list("https", ipports)
+            logger.info("updated rproxy")
             await self._add_proxy_url()
             logger.info("updated url")
             self.last_proxy_url_time = time.time()
-
+            
+        
         self.is_firt_time = False
     
     
@@ -134,25 +252,25 @@ class ProxyUpdater:
         last = max(int(res['# last_ips']), 10)
         goods = int(res['# goods'])
         ipq = res["ips: "]
-        for i in range(6, 10):
-            if ipq[i] > 0:
-                res = self.proxy_provider.change_priority("https", i, 12)
-                del res
         if ipq[0] < 5:
             p = self.proxy_provider.move_priority("https", 5, 3, min(ipq[5], last))
             res = self.proxy_provider.change_priority("https", 3, 0)
             del p
             del res
-        if goods < last * 5 and ipq[5]+ipq[4] > 10:
+        if goods < last * 3 and ipq[5]+ipq[4] > 10:
             res = self.proxy_provider.change_priority("https", 4, 12)
             del res
             if ipq[5] < 2*last:
+                for i in range(6, 10):
+                    if ipq[i] > 0:
+                        res = self.proxy_provider.change_priority("https", i, 12)
+                        del res
                 res = self.proxy_provider.change_priority("https", 12, 5)
                 del res
-            p = self.proxy_provider.move_priority("https", 5, 3, min(ipq[5], last))
+            p = self.proxy_provider.move_priority("https", 5, 3, min(ipq[5], 2*last))
             del p
-        if goods > 10 * last and ipq[3] > 10:
-            res = self.proxy_provider.move_priority("https", 3, 5, min(ipq[3], goods - 7 * last))
+        if goods > 5 * last and ipq[3] > 10:
+            res = self.proxy_provider.move_priority("https", 3, 5, min(ipq[3], goods - 2 * last))
             del res
             
 async def update_runner():

@@ -61,7 +61,7 @@ class ProxyProvider:
         try:
             if ipport in self.ip_map[protocol].keys():
                 priority = self.ip_map[protocol][ipport]
-                new_priority = min(priority + 2, self.MAX_BAD_PRIORITY)
+                new_priority = min(priority + 2, self.MAX_GOOD_PRIORITY + 1)
                 self.ip_q[protocol][priority].remove(ipport)
                 self.ip_q[protocol][new_priority].append(ipport)
                 self.ip_map[protocol][ipport] = new_priority
@@ -312,4 +312,4 @@ if __name__ == '__main__':
     setup_logger("proxy_server")
     time.sleep(10)
     proxy_provider._add_file_proxies()
-    app.run(host='0.0.0.0', port=8008)
+    app.run(host='0.0.0.0', port=8008, debug=False, access_log=False)
