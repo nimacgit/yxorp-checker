@@ -31,7 +31,73 @@ EXAMPLE_HEADER = {
     "User-Agent": "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:83.0) Gecko/20100101 Firefox/83.0",
 }
 
+OpenproxySpaceURLListHeader = {
+    "Autority": "api.openproxy.space",
+    "Method": "GET",
+    "Path": "",
+    "Scheme": "https",
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Encoding": "gzip",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Origin": "https://openproxy.space",
+    "Referer": "https://openproxy.space/",
+    "Sec-Ch-Ua": '"Google Chrome";v="87", " Not;A Brand";v="99", "Chromium";v="87"',
+    "Sec-Ch-Ua-Mobile": "?0",
+    "Sec-Fetch-dest": "empty",
+    "Sec-Fetch-mode": "cors",
+    "Sec-Fetch-site": "same-site",
+    "User-Agent": "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:83.0) Gecko/20100101 Firefox/83.0",
+}
 
+
+class IPParserForOpenproxySpace():
+    baseurl = "https://api.openproxy.space/"
+    
+    def _get_proxy_list_urls(self):
+        path = f"list?skip=0&ts={int(time.time()*1000)}"
+        url = self.baseurl + path
+        header = OpenproxySpaceURLListHeader
+        header['Path'] = path        
+        try:
+            res = requests.get(url, timeout=15, headers=header)
+            if res.status_code == 200:
+                slugs = self._get_pages_slugs(res)
+                urls = [f"https://openproxy.space/list/{s}" for s in slugs]
+                return urls
+            else:
+                logger.info(f"status is not 200 link OpenproxySpace {url}")
+        except Exception as E:
+            logger.debug(f"Exp in get from OpenproxySpace: _get_proxy_list_urls {E}")
+        return []
+
+    def _get_pages_slugs(self, res):
+        data = json.loads(res.text)
+        slugs = [d['code'] for d in data]
+        return slugs
+    
+    def _get_ips_from_openproxy(self, html):
+        ip_list = []
+        if not html:
+            return []
+        soup = BeautifulSoup(html, 'html.parser')
+        ip_candidates = re.findall(r'[0-9]+(?:\.[0-9]+){3}:[0-9]+', str(html))
+        return ip_candidates
+    
+    def get_proxies(self):
+        proxy_list_urls = self._get_proxy_list_urls()
+        ipports = []
+        for proxy_list_url in proxy_list_urls:
+            try:
+                res = requests.get(proxy_list_url, timeout=15, headers=EXAMPLE_HEADER)
+                if res.status_code == 200:
+                    ipports = ipports + self._get_ips_from_openproxy(res.text)
+                else:
+                    logger.info(f"status is not 200 link OpenproxySpace {proxy_list_url}")
+            except Exception as E:
+                logger.debug(f"Exp in get from OpenproxySpace: get_proxies {E}")
+        return list(set(ipports))
+    
+    
 class IPParserForKuaidaili():
     def _get_ips_from_kuaidaili(self, html):
         ip_list = []
@@ -62,8 +128,8 @@ class IPParserForKuaidaili():
                     ipports = ipports + self._get_ips_from_kuaidaili(res.text)
                 else:
                     logger.info(f"status is not 200 kuaidaili link {url}")
-            except:
-                logger.info("Exp in get from kuaidaili")
+            except Exception as E:
+                logger.debug(f"Exp in get from kuaidaili: get_proxies {E}")
         return list(set(ipports))
 
 
@@ -132,7 +198,7 @@ class ProxyUpdater:
         self.last_save_time = time.time()
         self.last_proxy_url_time = time.time()
         self.asession = AsyncHTMLSession()
-        self.parsers = [RParser(), IPParserForKuaidaili()]
+        self.parsers = [IPParserForOpenproxySpace(), RParser(), IPParserForKuaidaili()]
         
     
     def _add_proxy_list(self, protocol, ipports):
