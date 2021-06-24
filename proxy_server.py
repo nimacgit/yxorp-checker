@@ -312,4 +312,4 @@ if __name__ == '__main__':
     setup_logger("proxy_server")
     time.sleep(10)
     proxy_provider._add_file_proxies()
-    app.run(host='0.0.0.0', port=8008, debug=False, access_log=False)
+    app.run(host='0.0.0.0', port=8008, debug=False, access_log=True)

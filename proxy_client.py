@@ -1,6 +1,8 @@
 import requests
 import time
 from loguru import logger
+import random
+
 
 class ProxyProvider:
     example_headers = {
@@ -13,7 +15,26 @@ class ProxyProvider:
     
     def __init__(self, ipport="0.0.0.0:8008"):
         self.ipport=ipport
-    
+
+    @staticmethod
+    def get_random_header():
+        chrome_0 = random.randint(80, 91)
+        chrome_1 = random.randint(1, 4000)
+        android_0 = random.randint(5, 11)
+        android_1 = random.randint(0, 6)
+        safari_0 = random.randint(500, 537)
+        safari_1 = random.randint(1, 40)
+        apple_0 = random.randint(500, 537)
+        apple_1 = random.randint(1, 40)
+        phone = random.choice(["Nexus 5X Build/MMB29P", "SM-G930V Build/NRD90M", "Pixel 2; DuplexWeb-Google/1.0", "Pixel 2 Build/OPD3.170816.012; Storebot-Google/1.0"])
+
+        return {
+            "user-agent": f"Mozilla/5.0 (Linux; Android {android_0}.{android_1}.1; {phone}) AppleWebKit/{apple_0}.{apple_1} (KHTML, like Gecko) Chrome/{chrome_0}.0.{chrome_1}.90 Mobile Safari/{safari_0}.{safari_1} (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
+            "Accept": "text/html,application/xhtml+xml,application/signed-exchange;v=b3,application/xml;q=0.9,*/*;q=0.8",
+            "request_From": "googlebot(at)googlebot.com"
+        }
+        
+
     def get_bad_proxy(self, protocol):
         while True:
             try:
@@ -89,7 +110,7 @@ class ProxyProvider:
                 time.sleep(0.5)
     
     def get_link(self, url, protocol=None, retry=-1):
-        headers = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_11_5) AppleWebKit/537.36 (KHTML, like Gecko) Cafari/537.36'}
+        headers = example_headers
         if retry < 0:
             retry = -10
         r = None
