@@ -2,6 +2,7 @@ import requests
 import time
 from loguru import logger
 import random
+import aiohttp
 
 
 class ProxyProvider:
@@ -30,8 +31,10 @@ class ProxyProvider:
 
         return {
             "user-agent": f"Mozilla/5.0 (Linux; Android {android_0}.{android_1}.1; {phone}) AppleWebKit/{apple_0}.{apple_1} (KHTML, like Gecko) Chrome/{chrome_0}.0.{chrome_1}.90 Mobile Safari/{safari_0}.{safari_1} (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
-            "Accept": "text/html,application/xhtml+xml,application/signed-exchange;v=b3,application/xml;q=0.9,*/*;q=0.8",
-            "request_From": "googlebot(at)googlebot.com"
+#             "Accept": "text/html,application/xhtml+xml,application/signed-exchange;v=b3,application/xml;q=0.9,*/*;q=0.8",
+            'Accept': '*/*',
+            "request_From": "googlebot(at)googlebot.com",
+            'referrer': 'https://google.com',
         }
         
 
@@ -42,7 +45,20 @@ class ProxyProvider:
             except:
                 logger.debug("cant get from proxy")
                 time.sleep(0.5)
-    
+
+    async def get_proxy_async(self, protocol, retry=-1):
+        session = aiohttp.ClientSession(connector=aiohttp.TCPConnector(ttl_dns_cache=3000))
+        while retry != 0:
+            retry -= 1
+            try:
+                res = await session.get(f"http://{self.ipport}/get_proxy/{protocol}")
+                res = (await res.json())["proxy"]
+                await session.close()
+                return res
+            except:
+                logger.debug("cant get from proxy")
+                time.sleep(0.5)
+
     def get_proxy(self, protocol, retry=-1):
         while retry != 0:
             retry -= 1

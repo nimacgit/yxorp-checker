@@ -16,6 +16,17 @@ import re
 import os
 
 
+'''
+			http://spys.one
+			https://free-proxy-list.net/
+			https://www.sslproxies.org/
+			https://www.freeproxy.world/
+			https://github.com/TheSpeedX/PROXY-List
+			https://github.com/chill117/proxy-lists/tree/master/sources
+			https://github.com/clarketm/proxy-list/blob/master/proxy-list.txt
+			https://github.com/Undercore/ProxyScraper.py/blob/master/SourceCode.py
+'''
+
 class IPParser(metaclass=abc.ABCMeta):
     @abc.abstractmethod
     def get_proxies(self):
@@ -23,7 +34,6 @@ class IPParser(metaclass=abc.ABCMeta):
 
 EXAMPLE_HEADER = {
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-    # "Accept-Encoding": "gzip, deflate"
     "Accept-Language": "en-US,en;q=0.5",
     "Connection": "keep-alive",
     "If-Modified-Since": (datetime.now() - timedelta(hours=10)).strftime("%a, %d %b %Y %H:%M:%S GMT"),
@@ -304,39 +314,34 @@ class ProxyUpdater:
             await self._add_proxy_url()
             logger.info("updated url")
             self.last_proxy_url_time = time.time()
-            
-        
         self.is_firt_time = False
-    
-    
-
         
-    def adopt_proxy(self):
+    def adopt_proxy(self, protocol="https"):
         logger.debug("check for good ip rate")
-        res = self.proxy_provider.get_stats("https")
+        res = self.proxy_provider.get_stats(protocol)
         total = int(res['# ip_q'])
         last = max(int(res['# last_ips']), 10)
         goods = int(res['# goods'])
         ipq = res["ips: "]
         if ipq[0] < 5:
-            p = self.proxy_provider.move_priority("https", 5, 3, min(ipq[5], last))
-            res = self.proxy_provider.change_priority("https", 3, 0)
+            p = self.proxy_provider.move_priority(protocol, 5, 3, min(ipq[5], last))
+            res = self.proxy_provider.change_priority("protocol", 3, 0)
             del p
             del res
         if goods < last * 3 and ipq[5]+ipq[4] > 10:
-            res = self.proxy_provider.change_priority("https", 4, 12)
+            res = self.proxy_provider.change_priority(protocol, 4, 12)
             del res
             if ipq[5] < 2*last:
                 for i in range(6, 10):
                     if ipq[i] > 0:
-                        res = self.proxy_provider.change_priority("https", i, 12)
+                        res = self.proxy_provider.change_priority(protocol, i, 12)
                         del res
-                res = self.proxy_provider.change_priority("https", 12, 5)
+                res = self.proxy_provider.change_priority(protocol, 12, 5)
                 del res
-            p = self.proxy_provider.move_priority("https", 5, 3, min(ipq[5], 2*last))
+            p = self.proxy_provider.move_priority(protocol, 5, 3, min(ipq[5], 2*last))
             del p
         if goods > 5 * last and ipq[3] > 10:
-            res = self.proxy_provider.move_priority("https", 3, 5, min(ipq[3], goods - 2 * last))
+            res = self.proxy_provider.move_priority(protocol, 3, 5, min(ipq[3], goods - 2 * last))
             del res
             
 async def update_runner():
@@ -353,7 +358,8 @@ async def update_runner():
 def adopt_runner():
     proxy_updater = ProxyUpdater()
     while True:
-        proxy_updater.adopt_proxy()
+        for protocol in proxy_updater.PROTOCOLS:
+            proxy_updater.adopt_proxy(protocol)
         time.sleep(1)
 
 if __name__ == '__main__':
