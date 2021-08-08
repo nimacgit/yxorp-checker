@@ -221,6 +221,7 @@ class ProxyUpdater:
             else:
                 proxies = None
             self._add_proxy_list("https", [(await self.asession.get("https://pubproxy.com/api/proxy?type=https&speed=15&https=true", timeout=15, proxies=proxies)).json()["data"][0]["ipPort"]])
+            self._add_proxy_list("http", [(await self.asession.get("https://pubproxy.com/api/proxy?type=https&speed=15&https=true", timeout=15, proxies=proxies)).json()["data"][0]["ipPort"]])
         except:
             logger.info("pubproxy failed")
         pass
@@ -310,6 +311,7 @@ class ProxyUpdater:
                 ipports = parser.get_proxies()
                 logger.debug(f"got {len(ipports)} proxy")
                 self._add_proxy_list("https", ipports)
+                self._add_proxy_list("http", ipports)
             logger.info("updated rproxy")
             await self._add_proxy_url()
             logger.info("updated url")

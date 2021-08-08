@@ -1,8 +1,10 @@
 from sanic.response import json
+from threading import Lock
 from loguru import logger
 from sanic import Sanic
 import asyncio
 import time
+import copy
 import os
 
 
@@ -12,13 +14,22 @@ class Node:
         self.next_node = next_node
         self.prev_node = prev_node
 
+    def clone(self):
+        node = Node()
+        node.value = self.value
+        node.next_node = self.next_node
+        node.prev_node = self.prev_node
+        return node
+
 class LinkedList:
     def __init__(self):
         self.head = None
         self.tail = None
         self.size = 0
+        self.lock = Lock()
 
-    def append_node(self, node):
+    async def append_node(self, node):
+        self.lock.acquire()
         node.prev_node = None
         node.next_node = None
         if self.size == 0:
@@ -32,14 +43,16 @@ class LinkedList:
             node.prev_node = self.tail
             self.tail = node
         self.size += 1
+        self.lock.release()
         return node
 
-    def append(self, value):
+    async def append(self, value):
         node = Node(value, None, None)
-        self.append_node(node)
+        await self.append_node(node)
         return node
 
-    def push_front_node(self, node):
+    async def push_front_node(self, node):
+        self.lock.acquire()
         node.prev_node = None
         node.next_node = None
         if self.size == 0:
@@ -54,60 +67,62 @@ class LinkedList:
             node.next_node = self.head
             self.head = node
         self.size += 1
+        self.lock.release()
         return node
 
-    def push_front(self, value):
+    async def push_front(self, value):
         node = Node(value, None, None)
-        self.push_front_node(node)
+        await self.push_front_node(node)
         return node
 
     def first(self):
         return self.head
     
-    def pop(self):
+    async def pop(self):
+        self.lock.acquire()
         if self.size == 0:
+            self.lock.release()
             return
-
         node = self.head
         val = node.value
         self.size -= 1
-
+        if self.size < 0:
+            logger.exception("-1 -1 -1 pop")
+            raise
         if self.size == 0:
             self.head = None
             self.tail = None
         elif self.size == 1:
             self.head = self.tail
+            self.head.prev_node = None
             self.tail = None            
         else:
             self.head.next_node.prev_node = None
             self.head = self.head.next_node
+        self.lock.release()
         return node
         
-    def delete_node(self, node):
-        self.size -= 1
-        if self.size == 0:
-            self.head = None
-            self.tail = None
-            return
-        if node == self.head:
-            v = self.pop()
-            del v
-            return
-        elif node == self.tail:
-            self.tail = self.tail.prev_node
-            self.tail.next_node = None
-        else:
-            node.prev_node.next_node = node.next_node
-            node.next_node.prev_node = node.prev_node
-        del node
-        
+    def get_nodes_stat(self):
+        res = []
+        node = self.head
+        while node is not None:
+            res.append(node)
+            node = node.next_node
+        return {"nodes": res, "tail": self.tail, "head": self.head}
+
+    def print_state(self):
+        node = self.head
+        while node is not None:
+            print(node.value, end=" --> ")
+            node = node.next_node
+        print()
 
 class Proxy:
-    def __init__(self, ipport, priority, node):
+    def __init__(self, ipport, priority, node, last_used=None):
         self.ipport = ipport
         self.priority = priority
         self.node = node
-        self.last_used = None
+        self.last_used = last_used
 
     def get_ipport_with_priority(self):
         return [self.ipport, self.priority]
@@ -125,53 +140,87 @@ class ProxyQueueManager:
         self.QUEUE_MAX_SIZE = 500000
         self.proxy_meta = {}
         self.buckets = []
+        self.lock = Lock()
         for _ in range(self.BUCKETS_NUMBER):
             self.buckets.append(LinkedList())
 
-    def add_ip_with_priority(self, ipport, priority):
+    async def add_ip_with_priority(self, ipport, priority):
+        self.lock.acquire()
         if self.proxy_meta.get(ipport, None) is not None:
+            self.lock.release()
             return
-        node = self.buckets[priority].append(ipport)
+        node = await self.buckets[priority].append(ipport)
         self.proxy_meta[ipport] = Proxy(ipport, priority, node)
+        self.lock.release()
         
     
-    def get_good_proxy(self):
-        for i in range(self.MAX_GOOD_PRIORITY + 1):
-            bucket = self.buckets[i]
+    async def get_good_proxy(self):
+        p = 0
+        while p <= self.MAX_GOOD_PRIORITY:
+            bucket = self.buckets[p]
+            self.lock.acquire()
             if bucket.size > 0:
-                first = self.buckets[i].first()
+                first = bucket.first()
                 proxy = self.proxy_meta[first.value]
-                if proxy.last_used is None or time.time() - proxy.last_used > self.MIN_REUSE_TIME:
-                    self.buckets[i].pop()
-                    self.buckets[max(i-1, 0)].append_node(first)
-                    proxy.priority = max(i-1, 0)
-                    proxy.last_used = time.time()
-                    return first.value
-
+                if first == proxy.node:
+                    if proxy.last_used is None or time.time() - proxy.last_used > self.MIN_REUSE_TIME:
+                        node = await bucket.pop()
+                        proxy.priority = max(proxy.priority-1, 0)
+                        await self.buckets[proxy.priority].append_node(node)
+                        proxy.last_used = time.time()
+                        self.lock.release()
+                        return first.value
+                else:
+#                     bucket.size += 1
+                    node = await bucket.pop()
+                    del node
+                    p -= 1
+            p += 1
+            self.lock.release()
     
-    def bad_proxy(self, ipport):
+    async def bad_proxy(self, ipport):
+        self.lock.acquire()
         proxy = self.proxy_meta.get(ipport, None)
         if proxy:
-            self.buckets[proxy.priority].delete_node(proxy.node)
+#             await self.buckets[proxy.priority].delete_node(proxy.node)
+#             self.buckets[proxy.priority].size -= 1
+            proxy.node = proxy.node.clone()
+#             proxy.node = Node(proxy.node.value, proxy.node.next_node, proxy.node.prev_node)
             proxy.priority = min(proxy.priority + 2, self.MAX_GOOD_PRIORITY + 1)
             proxy.last_used = time.time()
-            self.buckets[proxy.priority].append_node(proxy.node)
+            await self.buckets[proxy.priority].append_node(proxy.node)
+        self.lock.release()
     
-    def delete_priority(self, priority):
+    async def delete_priority(self, priority):
+        self.lock.acquire()
         while self.buckets[priority].size > 0:
-            node = self.buckets[priority].pop()
-            del self.proxy_meta[node.value]
-                
-    def change_priority(self, src_p, dest_p, count=-1):
-        while self.buckets[src_p].size > 0 and count != 0:
-            node = self.buckets[src_p].pop()
-            self.proxy_meta[node.value].priority = dest_p
-            if self.proxy_meta[node.value].last_used is None or time.time() - self.proxy_meta[node.value].last_used > self.MIN_REUSE_TIME:
-                self.buckets[dest_p].push_front_node(node)
+            node = await self.buckets[priority].pop()
+            if self.proxy_meta[node.value].node == node:
+                del self.proxy_meta[node.value]
             else:
-                self.buckets[dest_p].append_node(node)
-            count -= 1
-            
+#                 self.buckets[priority].size += 1
+                del node
+        self.lock.release()
+
+    async def change_priority(self, src_p, dest_p, count=-1):
+        if src_p == dest_p:
+            return
+        self.lock.acquire()
+        while self.buckets[src_p].size > 0 and count != 0:
+            node = await self.buckets[src_p].pop()
+            proxy = self.proxy_meta[node.value]
+            if proxy.node == node:
+                proxy.priority = dest_p
+                if proxy.last_used is None or time.time() - proxy.last_used > self.MIN_REUSE_TIME:
+                    await self.buckets[proxy.priority].push_front_node(node)
+                else:
+                    await self.buckets[proxy.priority].append_node(node)
+                count -= 1
+            else:
+#                 self.buckets[src_p].size += 1
+                del node
+        self.lock.release()
+
     def get_stat(self):
         goods = sum([self.buckets[p].size for p in range(self.MAX_GOOD_PRIORITY+1)])
         bads = sum([self.buckets[p].size for p in range(self.MAX_GOOD_PRIORITY+1, self.BUCKETS_NUMBER)])
@@ -180,6 +229,20 @@ class ProxyQueueManager:
 
     def get_ipports(self):
         return [self.proxy_meta[k].get_ipport_with_priority() for k in self.proxy_meta.keys()]
+    
+    def print_state(self):
+        for ind, b in enumerate(self.buckets):
+            stat = b.get_nodes_stat()
+            nodes = stat["nodes"]
+            print(f"{ind} size: {b.size}", end=": ")
+            for n in nodes:
+                print(f"{n.value} - {n} - {self.proxy_meta[n.value].priority}", end=" --> ")
+            print()
+            if stat["head"]:
+                print(f"head: {stat['head'].value} - {stat['head']} - {self.proxy_meta[stat['head'].value].priority} - p: {stat['head'].prev_node} - n: {stat['head'].next_node}")
+            if stat["tail"]:
+                print(f"tail: {stat['tail'].value} - {stat['tail']} - {self.proxy_meta[stat['tail'].value].priority} - p: {stat['tail'].prev_node} - n: {stat['tail'].next_node}")
+        print()
 
 class ProxyProvider:
     PROTOCOLS = ["https", "http", "socks5"]
@@ -191,42 +254,50 @@ class ProxyProvider:
         for p in self.PROTOCOLS:
             self.managers[p] = ProxyQueueManager(protocol=p)
 
-    def add_ip_with_priority(self, protocol, ipport, priority):
+    async def add_ip_with_priority(self, protocol, ipport, priority):
         if len(ipport) < 10:
             return
-        self.managers[protocol].add_ip_with_priority(ipport, priority)
+        await self.managers[protocol].add_ip_with_priority(ipport, priority)
 
-    def add_ip_bulk(self, protocol, ipports):
+    async def add_ip_bulk(self, protocol, ipports):
         for ipport in ipports:
-            self.add_ip_with_priority(protocol, ipport, priority=self.NEW_IP_PRIORITY)
+            await self.add_ip_with_priority(protocol, ipport, priority=self.NEW_IP_PRIORITY)
 
-    def get_proxy(self, protocol):
+    async def get_proxy(self, protocol):
+        if protocol not in self.PROTOCOLS:
+            return {"result": "protocol not found"}
         try:
-            self.usage_list.append(time.time())
+            await self.usage_list.append(time.time())
             while self.usage_list.size > 0 and time.time() - self.usage_list.first().value > 30:
-                tmp = self.usage_list.pop()
+                tmp = await self.usage_list.pop()
                 del tmp
-            return self.managers[protocol].get_good_proxy()
+            res = await self.managers[protocol].get_good_proxy()
+            return {"proxy": res}
         except:
-            logger.exception("WTF bad_proxy func")
+            logger.exception("WTF get_proxy func")
+            return {"proxy": None}
 
-    def bad_proxy(self, protocol, ipport):
+    async def bad_proxy(self, protocol, ipport):
+        if protocol not in self.PROTOCOLS:
+            return {"result": "protocol not found"}
         try:
-            self.managers[protocol].bad_proxy(ipport)
+            await self.managers[protocol].bad_proxy(ipport)
+            return {"result": "success"}
         except:
             logger.exception("WTF bad_proxy func")
-    
-    def delete_priority(self, protocol, priority):
+            return {"result": "failed"}
+        
+    async def delete_priority(self, protocol, priority):
         try:
-            self.managers[protocol].delete_priority(priority)
+            await self.managers[protocol].delete_priority(priority)
         except:
             logger.exception("WTF in del_proirity")
 
-    def change_priority(self, protocol, src_p, dest_p):
-        self.managers[protocol].change_priority(src_p, dest_p)
+    async def change_priority(self, protocol, src_p, dest_p):
+        await self.managers[protocol].change_priority(src_p, dest_p)
     
-    def move_priority(self, protocol, src_p, dest_p, count):
-        self.managers[protocol].change_priority(src_p, dest_p, count)
+    async def move_priority(self, protocol, src_p, dest_p, count):
+        await self.managers[protocol].change_priority(src_p, dest_p, count)
     
     def get_stat(self, protocol):
         goods_count, bads_count, bins = self.managers[protocol].get_stat()
@@ -235,13 +306,13 @@ class ProxyProvider:
     def save_to_file(self, file_name='./proxies0'):
         for protocol in self.PROTOCOLS:
             with open(f"{file_name}_{protocol}.txt", 'w') as f:
-                for ip, p in self.managers[protocol].get_ipport_with_priority():
+                for ip, p in self.managers[protocol].get_ipports():
                     f.write(f"{p},{ip}\n")
     
-    def _add_file_proxies(self):
+    async def _add_file_proxies(self, path="."):
         try:
             for protocol in self.PROTOCOLS:
-                file_name = f"./proxies_{protocol}.txt"
+                file_name = f"{path}/proxies_{protocol}.txt"
                 if os.path.isfile(file_name):
                     f = open(file_name, "r")
                     l = f.readline()
@@ -250,7 +321,7 @@ class ProxyProvider:
                         ps.append(l.replace("\n", "").split(","))
                         l = f.readline()
                     for p in ps:
-                        self.add_ip_with_priority(protocol, p[1], int(p[0]))
+                        await self.add_ip_with_priority(protocol, p[1], int(p[0]))
         except:
             logger.exception("couldnt read proxy file")
     
@@ -263,25 +334,17 @@ app = Sanic("proxy_server")
 
 @app.route('/get_proxy/<protocol>')
 async def get(request, protocol):
-    if protocol not in proxy_provider.PROTOCOLS:
-        return json({"result": "protocol not found"})
     try:
-        proxy = proxy_provider.get_proxy(protocol)
-        if proxy:
-            return json({"proxy": proxy})
-        else:
-            return None
+        return json(await proxy_provider.get_proxy(protocol))
     except:
         logger.exception("WTF in get_proxy")
         return json({"proxy": None})
 
 @app.route('/bad_proxy/<protocol>/<ipport>')
 async def bad_proxy(request, protocol, ipport):
-    if protocol not in proxy_provider.PROTOCOLS:
-        return json({"result": "protocol not found"})
+    
     try:
-        proxy_provider.bad_proxy(protocol, ipport)
-        return json({"result": "done"})
+        return json(await proxy_provider.bad_proxy(protocol, ipport))
     except:
         logger.exception("WTF in bad_ip")
         return json({"result": "failed"})
@@ -291,7 +354,7 @@ async def add_ip(request, protocol, ipport):
     if protocol not in proxy_provider.PROTOCOLS:
         return json({"result": "protocol not found"})
     try:
-        proxy_provider.add_ip(protocol, ipport)
+        await proxy_provider.add_ip(protocol, ipport)
         return json({"result": "done"})
     except:
         logger.exception("WTF in add_ip")
@@ -302,7 +365,7 @@ async def add_ip_bulk(request, protocol):
     if protocol not in proxy_provider.PROTOCOLS:
         return json({"result": "protocol not found"})
     try:
-        proxy_provider.add_ip_bulk(protocol, request.json)
+        await proxy_provider.add_ip_bulk(protocol, request.json)
         return json({"result": "done"})
     except:
         logger.exception("WTF in add_ip_bulk")
@@ -332,7 +395,7 @@ async def chng_p(request, protocol, src_p, dest_p):
     if protocol not in proxy_provider.PROTOCOLS:
         return json({"result": "protocol not found"})
     try:
-        proxy_provider.change_priority(protocol, int(src_p), int(dest_p))
+        await proxy_provider.change_priority(protocol, int(src_p), int(dest_p))
         return json({"result": "done"})
     except:
         logger.exception("WTF in chng_p")
@@ -343,7 +406,7 @@ async def move_priority(request, protocol, src_p, dest_p, count):
     if protocol not in proxy_provider.PROTOCOLS:
         return json({"result": "protocol not found"})
     try:
-        proxy_provider.move_priority(protocol, int(src_p), int(dest_p), int(count))
+        await proxy_provider.move_priority(protocol, int(src_p), int(dest_p), int(count))
         return json({"result": "done"})
     except:
         logger.exception("WTF in move_p")
@@ -354,7 +417,7 @@ async def del_p(request, protocol, priority):
     if protocol not in proxy_provider.PROTOCOLS:
         return json({"result": "protocol not found"})
     try:
-        proxy_provider.delete_priority(protocol, int(priority))
+        await proxy_provider.delete_priority(protocol, int(priority))
         return json({"result": "done"})
     except:
         logger.exception("WTF in del_p")
@@ -367,6 +430,10 @@ if __name__ == '__main__':
             logger.add(f"./logs/{file_name}-info.log", format="{time} {level} {message}", level="INFO", enqueue=True, backtrace=True)
             logger.add(f"./logs/{file_name}-error.log", format="{time} {level} {message}", level="ERROR", enqueue=True, backtrace=True, diagnose=True)
     setup_logger("proxy_server")
-    time.sleep(10)
-    proxy_provider._add_file_proxies()
-    app.run(host='0.0.0.0', port=8008, debug=False, access_log=False)
+    time.sleep(1)
+    asyncio.run(proxy_provider._add_file_proxies())
+    app.run(host='0.0.0.0', port=8008, debug=False, access_log=False, workers=1, auto_reload=False)
+#     asyncio.gather(app.create_server(host='0.0.0.0', port=8008, debug=False, access_log=False))
+#     loop = asyncio.get_event_loop()
+#     task = asyncio.ensure_future(server)
+#     loop.run_forever()
