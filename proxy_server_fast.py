@@ -6,7 +6,7 @@ import asyncio
 import time
 import copy
 import os
-
+import re
 
 class Node:
     def __init__(self, value=None, next_node=None, prev_node=None):
@@ -246,6 +246,7 @@ class ProxyQueueManager:
 
 class ProxyProvider:
     PROTOCOLS = ["https", "http", "socks5"]
+    IPPORT_REGEX = "^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5]):([0-9]{1,4}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])$"
 
     def __init__(self):
         self.managers = {}
@@ -255,7 +256,7 @@ class ProxyProvider:
             self.managers[p] = ProxyQueueManager(protocol=p)
 
     async def add_ip_with_priority(self, protocol, ipport, priority):
-        if len(ipport) < 10:
+        if len(ipport) < 10 and not re.match(IPPORT_REGEX, ipport):
             return
         await self.managers[protocol].add_ip_with_priority(ipport, priority)
 
@@ -309,7 +310,7 @@ class ProxyProvider:
                 for ip, p in self.managers[protocol].get_ipports():
                     f.write(f"{p},{ip}\n")
     
-    async def _add_file_proxies(self, path="."):
+    async def _load_data(self, path="."):
         try:
             for protocol in self.PROTOCOLS:
                 file_name = f"{path}/proxies_{protocol}.txt"
@@ -431,7 +432,7 @@ if __name__ == '__main__':
             logger.add(f"./logs/{file_name}-error.log", format="{time} {level} {message}", level="ERROR", enqueue=True, backtrace=True, diagnose=True)
     setup_logger("proxy_server")
     time.sleep(1)
-    asyncio.run(proxy_provider._add_file_proxies())
+    asyncio.run(proxy_provider._load_data())
     app.run(host='0.0.0.0', port=8008, debug=False, access_log=False, workers=1, auto_reload=False)
 #     asyncio.gather(app.create_server(host='0.0.0.0', port=8008, debug=False, access_log=False))
 #     loop = asyncio.get_event_loop()
