@@ -1,5 +1,5 @@
-from .parsers import IPParserForOpenproxySpace, IPParserForKuaidaili, RParser, GeneralParser, ScyllaParser, PubParser, RawParser
-from .proxy_client_fast import ProxyProvider
+from parsers import IPParserForOpenproxySpace, IPParserForKuaidaili, RParser, GeneralParser, ScyllaParser, PubParser, RawParser
+from proxy_client_fast import ProxyProvider
 from datetime import datetime, timedelta
 from multiprocessing import Process
 from loguru import logger

@@ -1,4 +1,4 @@
-from .proxy_client_fast import ProxyProvider
+from proxy_client_fast import ProxyProvider
 from bs4 import BeautifulSoup
 from loguru import logger
 import tracemalloc
